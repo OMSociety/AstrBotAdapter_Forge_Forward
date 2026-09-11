@@ -1,0 +1,110 @@
+// NeoForge 26.2 加载器（ModDevGradle 2）。
+// 平台无关代码位于仓库根的 common/，本工程通过 sourceSets 直接编译它，
+// 因此共用代码只有一份、无需跨工程发布产物。
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '2.0.146'
+    id 'idea'
+}
+
+// 仓库级共享属性（mod_version / mod_id / mod_name 等）
+apply from: '../../gradle-shared.gradle'
+
+version = "${mod_version}+mc${minecraft_version}"
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+// Mojang ships Java 25 to end users in 26.2, so mods should target Java 25.
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+// 共享源码：平台无关代码（common）直接并入本工程
+sourceSets {
+    main {
+        java {
+            srcDirs = [file('../../common/src/main/java'), file('src/main/java')]
+        }
+        resources {
+            srcDirs = [file('../../common/src/main/resources'), file('src/main/resources')]
+        }
+    }
+}
+
+sourceSets.main.resources {
+    // Exclude common development only resources from finalized outputs
+    exclude("**/*.bbmodel")
+    exclude("src/generated/**/.cache")
+}
+
+println "Java: ${System.getProperty 'java.version'}, JVM: ${System.getProperty 'java.vm.version'} (${System.getProperty 'java.vendor'}), Arch: ${System.getProperty 'os.arch'}"
+
+neoForge {
+    version = project.neo_version
+
+    runs {
+        server {
+            server()
+            programArgument '--nogui'
+        }
+
+        configureEach {
+            // 开发环境日志级别（服务端联调用）
+            logLevel = org.slf4j.event.Level.INFO
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
+
+// Sets up a dependency configuration called 'localRuntime'.
+configurations {
+    runtimeClasspath.extendsFrom localRuntime
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Netty WebSocket/HTTP 编解码（统一服务器依赖）。
+    // 编译期需要；运行时 NeoForge 26.2 是否已提供 netty-codec-http 尚未实测，
+    // 因此这里先只声明编译期+运行期依赖，等 dev 服烟测确认后再决定是否需要嵌套打包。
+    implementation 'io.netty:netty-codec-http:4.1.115.Final'
+
+    // snakeyaml：ConfigManager 解析/写出 YAML 配置
+    implementation 'org.yaml:snakeyaml:2.3'
+}
+
+// 生成 neoforge.mods.toml（${...} 占位符在构建期展开）
+var generateModMetadata = tasks.register("generateModMetadata", ProcessResources) {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_range      : neo_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            mod_description        : mod_description,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from "src/main/templates"
+    into "build/generated/sources/modMetadata"
+}
+sourceSets.main.resources.srcDir generateModMetadata
+neoForge.ideSyncTask generateModMetadata
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

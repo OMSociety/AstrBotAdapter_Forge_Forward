@@ -1,0 +1,44 @@
+package io.github.railgun19457.astrbotadapter.communication.protocol;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+
+/**
+ * Protocol metadata exposed to clients for feature detection.
+ */
+public final class ProtocolInfo {
+
+    public static final int PROTOCOL_VERSION = 2;
+    public static final String API_VERSION = "v1";
+
+    private static final String[] FEATURES = {
+            "rest.servers.v2",
+            "rest.health",
+            "server.mspt",
+            "players.detail",
+            "players.offline-cache",
+            "command.async-result",
+            "command.target-server-id",
+            "command.ws-session-reply",
+            "ws.disconnect",
+            // 群友绑定与白名单写入能力：客户端据此决定是否放行绑定指令
+            // （原版 1.0.0 不含本能力，客户端必须优雅降级而不是报错）
+            "binding.v1"
+    };
+
+    private ProtocolInfo() {}
+
+    public static JsonArray featuresJson() {
+        JsonArray features = new JsonArray();
+        for (String feature : FEATURES) {
+            features.add(feature);
+        }
+        return features;
+    }
+
+    public static void addTo(JsonObject target) {
+        target.addProperty("protocolVersion", PROTOCOL_VERSION);
+        target.addProperty("apiVersion", API_VERSION);
+        target.add("features", featuresJson());
+    }
+}

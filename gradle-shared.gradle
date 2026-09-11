@@ -1,0 +1,19 @@
+// 仓库级共享属性：被两个加载器的 build.gradle 通过 `apply from: '../../gradle-shared.gradle'` 引用，
+// 版本号只维护这一处。用 ext 而不是 gradle.properties，是为了让「共享」与
+// 「加载器专属属性（minecraft_version / forge_version / neo_version）」职责分开。
+//
+// 注意：Gradle 的 `apply from:` 按 Groovy 脚本解析，因此本文件必须用 // 注释而非 #。
+
+ext {
+    // 版本策略：mod 主版本号与 MaiBot 插件保持一致；产物名与 Release tag 再加
+    // mc<Minecraft 版本> 后缀区分加载器（如 1.1.0+mc1.20.1 / 1.1.0+mc26.2）
+    mod_version = '1.1.0'
+
+    // Mod 元信息（mod_id 与 Java 包名保持不变，以免老服 config/astrbotadapter/config.yml 失效）
+    mod_id = 'astrbotadapter'
+    mod_name = 'Astrbot Adapter Forward'
+    mod_license = 'MIT'
+    mod_group_id = 'io.github.railgun19457.astrbotadapter'
+    mod_authors = 'railgun19457, OMSociety'
+    mod_description = '群服互通适配器：把 Minecraft 服务器与 AstrBot 双向打通（消息互通、状态监控、远程指令、AI 聊天、玩家通知、QQ 绑定白名单）。'
+}
