@@ -6,8 +6,8 @@
 
 ext {
     // 版本策略：mod 主版本号与 MaiBot 插件保持一致；产物名再附加
-    // mc<Minecraft 版本> 后缀（如 1.2.0+mc26.2），便于以后支持新的 MC 版本时并存
-    mod_version = '1.2.0'
+    // mc<Minecraft 版本> 后缀（如 1.1.0+mc26.2），便于以后支持新的 MC 版本时并存
+    mod_version = '1.1.0'
 
     // Mod 元信息（mod_id 与 Java 包名保持不变，以免老服 config/astrbotadapter/config.yml 失效）
     mod_id = 'astrbotadapter'
