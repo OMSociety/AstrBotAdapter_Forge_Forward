@@ -73,13 +73,15 @@ repositories {
 }
 
 dependencies {
-    // Netty WebSocket/HTTP 编解码（统一服务器依赖）。
-    // 编译期需要；运行时 NeoForge 26.2 是否已提供 netty-codec-http 尚未实测，
-    // 因此这里先只声明编译期+运行期依赖，等 dev 服烟测确认后再决定是否需要嵌套打包。
-    implementation 'io.netty:netty-codec-http:4.1.115.Final'
+    // Netty HTTP/WebSocket 编解码与 snakeyaml 都**不在** MC 26.2 / NeoForge 26.2 的运行时
+    // classpath 上（已实测：Minecraft 26.2 server/client jar 与 neoforge universal jar 均不含
+    // io/netty/handler/codec/http、org/yaml/snakeyaml）。因此必须用 Jar-in-Jar 打进 mod，
+    // 否则生产环境会 NoClassDefFoundError。
+    // jarJar(...) 包住 implementation 是 ModDevGradle 的推荐写法：同时提供编译期依赖，
+    // 并在构建时把 artifact 放进 META-INF/jarjar/（NeoForge 启动时自动加载）。
+    jarJar(implementation('io.netty:netty-codec-http:4.1.115.Final'))
 
-    // snakeyaml：ConfigManager 解析/写出 YAML 配置
-    implementation 'org.yaml:snakeyaml:2.3'
+    jarJar(implementation('org.yaml:snakeyaml:2.3'))
 }
 
 // 生成 neoforge.mods.toml（${...} 占位符在构建期展开）

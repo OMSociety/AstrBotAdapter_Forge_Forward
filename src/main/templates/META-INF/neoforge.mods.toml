@@ -1,7 +1,7 @@
 modLoader="javafml"
 loaderVersion="${loader_version_range}"
 license="${mod_license}"
-issueTrackerURL="https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/issues"
+issueTrackerURL="https://github.com/OMSociety/AstrBotAdapter_NeoForge/issues"
 
 [[mods]]
 modId="${mod_id}"

@@ -1,18 +1,18 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/OMSociety/AstrBotAdapter_Forge_Forward/main/icon.png" width="120" alt="AstrBotAdapter Forge Forward Logo" />
+<img src="https://raw.githubusercontent.com/OMSociety/AstrBotAdapter_NeoForge/main/icon.png" width="120" alt="AstrBotAdapter NeoForge Logo" />
 
-# Astrbot Adapter Forward 群服互通适配器
+# Astrbot Adapter NeoForge 群服互通适配器
 
 **连接 Minecraft 服务器与 AstrBot** —— 消息互通 · 服务器状态监控 · 远程指令执行 · 游戏内 AI 聊天 · 群友绑定白名单
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_NeoForge)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%2026.2-orange.svg)](https://www.minecraft.net/)
 [![Forge](https://img.shields.io/badge/Forge-47.x-green.svg)](https://files.minecraftforge.net/)
 [![NeoForge](https://img.shields.io/badge/NeoForge-26.2-green.svg)](https://neoforged.net/)
 [![License](https://img.shields.io/badge/license-MIT-orange.svg)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/OMSociety/AstrBotAdapter_Forge_Forward)](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/stargazers)
-[![Issues](https://img.shields.io/github/issues/OMSociety/AstrBotAdapter_Forge_Forward)](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/issues)
+[![Stars](https://img.shields.io/github/stars/OMSociety/AstrBotAdapter_NeoForge)](https://github.com/OMSociety/AstrBotAdapter_NeoForge/stargazers)
+[![Issues](https://img.shields.io/github/issues/OMSociety/AstrBotAdapter_NeoForge)](https://github.com/OMSociety/AstrBotAdapter_NeoForge/issues)
 
 [✨ 核心特性](#-核心特性) • [📖 功能概览](#-功能概览) • [🚀 快速开始](#-快速开始) • [🧷 群友绑定与白名单](#-群友绑定与白名单) • [🎮 游戏内指令](#-游戏内指令) • [⚙️ 配置项说明](#️-配置项说明) • [🧩 架构](#-架构) • [📝 更新日志](#-更新日志)
 
@@ -20,7 +20,7 @@
 
 > 🎨 本项目由 AI 编写 · 移植自 [AstrBotAdapter](https://github.com/Railgun19457/AstrBotAdapter)（原作者 [railgun19457](https://github.com/Railgun19457)）
 >
-> 本仓库是 [AstrBotAdapter_Forge](https://github.com/OMSociety/AstrBotAdapter_Forge) 的后续开发分支：**一套代码同时支持 Forge 1.20.1 与 NeoForge 26.2**，并新增「群友绑定 QQ ↔ 游戏 ID → 自动进白名单」。
+> 本仓库源自 [AstrBotAdapter_Forge](https://github.com/OMSociety/AstrBotAdapter_Forge)（Forge 1.20.1），现为 **NeoForge 26.2** 版本；两者共用同一套平台无关代码，本版本新增「群友绑定 QQ ↔ 游戏 ID → 自动进白名单」。
 
 ---
 
@@ -91,7 +91,7 @@
 
 ### 第一步：下载 mod
 
-从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/releases) 下载 `astrbotadapter-1.1.0-mc26.2.jar`。
+从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.1.0-mc26.2.jar`。
 
 ### 第二步：安装
 1. 将 jar 放入服务端 `mods/` 目录
@@ -418,7 +418,7 @@ HTTPS_PROXY=http://127.0.0.1:7897
 
 ## 🤝 贡献与反馈
 
-如遇问题请在 [GitHub Issues](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/issues) 提交，欢迎 Pull Request！
+如遇问题请在 [GitHub Issues](https://github.com/OMSociety/AstrBotAdapter_NeoForge/issues) 提交，欢迎 Pull Request！
 
 ## 🙏 致谢
 

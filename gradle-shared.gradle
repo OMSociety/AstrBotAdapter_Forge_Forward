@@ -11,7 +11,7 @@ ext {
 
     // Mod 元信息（mod_id 与 Java 包名保持不变，以免老服 config/astrbotadapter/config.yml 失效）
     mod_id = 'astrbotadapter'
-    mod_name = 'Astrbot Adapter Forward'
+    mod_name = 'Astrbot Adapter NeoForge'
     mod_license = 'MIT'
     mod_group_id = 'io.github.railgun19457.astrbotadapter'
     mod_authors = 'railgun19457, OMSociety'
