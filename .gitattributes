@@ -1,0 +1,4 @@
+# Gradle Wrapper 的 Unix 启动脚本必须保持 LF，否则在 Linux/macOS 上无法执行
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+*.sh text eol=lf
