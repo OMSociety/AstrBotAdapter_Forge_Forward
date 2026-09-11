@@ -131,7 +131,7 @@ public final class BindingService {
 
         boolean whitelistAdded = false;
         if (config.isBindingApplyToWhitelist()) {
-            WhitelistOutcome outcome = applyWhitelistAdd(resolved.name(), kind);
+            WhitelistOutcome outcome = applyWhitelistAdd(resolved.name(), kind, resolved.uuid());
             if (outcome == WhitelistOutcome.FAILED) {
                 return Result.rejected(Rejection.WHITELIST_FAILED, resolved.name());
             }
@@ -287,9 +287,9 @@ public final class BindingService {
         return new ArrayList<>(candidates);
     }
 
-    private WhitelistOutcome applyWhitelistAdd(String name, String kind) {
+    private WhitelistOutcome applyWhitelistAdd(String name, String kind, UUID knownUuid) {
         if (BindingRecord.isGeyser(kind)) {
-            return applyFloodgateWhitelistAdd(name);
+            return applyFloodgateWhitelistAdd(name, knownUuid);
         }
         if (platformAdapter.isOnlineMode()) {
             return applyWhitelistCommand(name);
@@ -359,22 +359,112 @@ public final class BindingService {
     }
 
     /**
-     * 基岩版（Geyser + Floodgate）：UUID 由 Bedrock XUID 生成，本地推导不出来，只能交给 Floodgate。
+     * 基岩版（Geyser + Floodgate）的白名单写入，**写后必回读校验**。
      *
-     * <p>实测本版 Floodgate 的 {@code fwhitelist} 不接受 UUID 参数，只能用用户名形式（且不带 Geyser 前缀）。</p>
+     * <p>本版 Floodgate 的 {@code fwhitelist} 不接受 UUID 参数，只能用不带 Geyser 前缀的用户名；
+     * 而它对名字的解析依赖 Floodgate 自己的 XUID 缓存 / Xbox Live API——缓存里没有该名字时，
+     * 它只在控制台留一行 {@code Unable to find user in our cache}，**不抛异常、不改白名单**。
+     * 而 `fwhitelist` 走的是 Cloud 指令框架，{@code executeCommand} 恒返回 true，
+     * 早期版本因此会误报「已加入白名单」，实际白名单里还是旧的错误条目（离线 UUID），
+     * 基岩玩家依旧进不来。所以这里不看指令返回值，只认白名单文件里实际写成了什么。
+     *
+     * @param name      解析得到的游戏 ID（带 Geyser 前缀，形如 {@code .ikarMing}）
+     * @param knownUuid 玩家在线时拿到的真实 UUID，可为 null；非 null 时按它直接写入并校验
      */
-    private WhitelistOutcome applyFloodgateWhitelistAdd(String name) {
-        if (platformAdapter.isFloodgateAvailable()) {
-            return runWhitelistCommand("fwhitelist add " + floodgateName(name), name);
+    private WhitelistOutcome applyFloodgateWhitelistAdd(String name, UUID knownUuid) {
+        String bare = floodgateName(name);
+        // 玩家在线：手里就有 Floodgate 依 XUID 生成的真实 UUID，直接按「服务器登录时看到的名字」
+        // （带前缀形态）写进白名单文件，完全绕开「名字解析要查 Xbox Live」这条不可靠路径。
+        if (knownUuid != null) {
+            if (!WhitelistFile.isFloodgateUuid(knownUuid)) {
+                logger.warning("基岩版绑定拿到的 UUID 不是 Floodgate 生成的，拒绝写入白名单: " + name);
+                return WhitelistOutcome.FAILED;
+            }
+            return writeWhitelistEntry(name, knownUuid);
         }
-        logger.warning("未检测到 Floodgate 的 fwhitelist 指令，基岩版白名单退回 /whitelist add "
-                + floodgateName(name) + "（该路径下服务端可能写入与基岩玩家不匹配的 UUID，请确认 Floodgate 已装好）");
-        return runWhitelistCommand("whitelist add " + floodgateName(name), name);
+
+        if (platformAdapter.isFloodgateAvailable()) {
+            if (!platformAdapter.executeCommand("fwhitelist add " + bare)) {
+                logger.warning("执行 fwhitelist add " + bare + " 失败（指令层拒绝）");
+                return WhitelistOutcome.FAILED;
+            }
+        } else {
+            logger.warning("未检测到 Floodgate 的 fwhitelist 指令，基岩版白名单退回 /whitelist add "
+                    + bare + "（该路径下服务端可能写入与基岩玩家不匹配的 UUID，请确认 Floodgate 已装好）");
+            if (!platformAdapter.executeCommand("whitelist add " + bare)) {
+                return WhitelistOutcome.FAILED;
+            }
+        }
+        // fwhitelist 按「不带前缀的名字」入册，所以条目名字是裸名；两种形态都查一遍以防版本差异
+        return verifyFloodgateEntry(name, bare);
     }
 
-    private WhitelistOutcome runWhitelistCommand(String command, String name) {
-        if (!platformAdapter.executeCommand(command)) {
-            logger.warning("加入白名单失败: " + name + "（请确认服务器已开启 white-list，且指令未被其它插件拦截）");
+    /** 按已知 UUID 直接写白名单文件并重载，复用离线路径的写后校验。 */
+    private WhitelistOutcome writeWhitelistEntry(String name, UUID uuid) {
+        Path file = platformAdapter.getWhitelistFile();
+        if (file == null) {
+            logger.warning("当前平台不支持读写白名单文件，无法写入基岩版白名单: " + name);
+            return WhitelistOutcome.FAILED;
+        }
+        try {
+            WhitelistFile.Change change = WhitelistFile.upsert(file, name, uuid);
+            if (!reloadWhitelist()) {
+                return WhitelistOutcome.FAILED;
+            }
+            UUID written = WhitelistFile.findUuid(file, name);
+            if (!uuid.equals(written)) {
+                logger.warning("白名单写入校验失败: " + name + " 期望 " + uuid + "，实际 " + written);
+                return WhitelistOutcome.FAILED;
+            }
+            if (change == WhitelistFile.Change.PRESENT) {
+                return WhitelistOutcome.ALREADY_PRESENT;
+            }
+            if (change == WhitelistFile.Change.REPLACED) {
+                logger.info("已修正白名单中 " + name + " 的 UUID（原条目与基岩版身份不符）");
+            }
+            return WhitelistOutcome.ADDED_BY_US;
+        } catch (IOException e) {
+            logger.warning("写入白名单文件失败: " + file + "（" + e.getMessage() + "）");
+            return WhitelistOutcome.FAILED;
+        }
+    }
+
+    /**
+     * 回读白名单，确认 {@code fwhitelist} 真的写进了「带 Floodgate UUID 的条目」。
+     *
+     * <p>三种情况会直接判失败并给出可执行的提示，而不是留下一条永远进不来的错误条目：
+     * 指令没写进去（名字解析失败/缓存过期）、写进去的 UUID 不是 Floodgate 生成的、
+     * 白名单文件不可读。
+     *
+     * @param names 候选条目名（带前缀与不带前缀两种形态，按顺序查）
+     */
+    private WhitelistOutcome verifyFloodgateEntry(String... names) {
+        Path file = platformAdapter.getWhitelistFile();
+        if (file == null) {
+            logger.warning("当前平台不支持读白名单文件，无法校验基岩版白名单是否写入成功: " + String.join("/", names));
+            return WhitelistOutcome.FAILED;
+        }
+        UUID written = null;
+        try {
+            for (String candidate : names) {
+                written = WhitelistFile.findUuid(file, candidate);
+                if (written != null) {
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            logger.warning("读取白名单文件失败: " + file + "（" + e.getMessage() + "）");
+            return WhitelistOutcome.FAILED;
+        }
+        if (written == null) {
+            logger.warning("fwhitelist 没有把 " + String.join("/", names)
+                    + " 写进白名单：Floodgate 没能把该名字解析成 XUID（Xbox Live 缓存里没有它）。"
+                    + "请让该玩家先用基岩版登录一次，或在玩家在线时重新绑定。");
+            return WhitelistOutcome.FAILED;
+        }
+        if (!WhitelistFile.isFloodgateUuid(written)) {
+            logger.warning("白名单中 " + String.join("/", names) + " 的 UUID 不是 Floodgate 生成的（实际 "
+                    + written + "），基岩玩家仍会被拒绝。请删除该条目后，在该玩家在线时重新绑定。");
             return WhitelistOutcome.FAILED;
         }
         return WhitelistOutcome.ADDED_BY_US;

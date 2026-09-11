@@ -27,9 +27,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 绑定流程在白名单上的行为测试：离线模式必须写入本地推导的离线 UUID，且 {@code whitelistAdded}
- * 归属要分清「本次绑定写入」与「管理员手工添加」。
+ * 归属要分清「本次绑定写入」与「管理员手工添加」。基岩版必须**回读校验**白名单，避免 Floodgate
+ * 名字解析失败时谎报成功。
  */
 class BindingServiceWhitelistTest {
+
+    /** 实测自真实服务器的基岩玩家 Floodgate UUID（.Slandre5167） */
+    private static final UUID FLOODGATE_UID =
+            UUID.fromString("00000000-0000-0000-0009-01f3e2933322");
 
     @Test
     @DisplayName("离线模式：按名字推导离线 UUID 写入白名单并重载，不再走 whitelist add")
@@ -137,23 +142,77 @@ class BindingServiceWhitelistTest {
 
     @Test
     @DisplayName("基岩版：交给 Floodgate 的 fwhitelist，名字不带 Geyser 前缀")
-    void geyserUsesFloodgateCommand(@TempDir Path dir) {
-        FakeAdapter adapter = new FakeAdapter(dir.resolve("whitelist.json"), false);
+    void geyserUsesFloodgateCommand(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("whitelist.json");
+        // fwhitelist 成功时会把「名字 + Floodgate UUID」写进 whitelist.json；本测试模拟这一结果，
+        // 用于验证插件的写后回读校验会读到它。
+        WhitelistFile.upsert(file, "MakurokiTomoko", FLOODGATE_UID);
+        FakeAdapter adapter = new FakeAdapter(file, false);
         adapter.floodgate = true;
         BindingService service = newService(dir, adapter);
 
         BindingService.Result result = service.bind("qq", "10006", "MakurokiTomoko", true);
 
         assertTrue(result.isSuccess());
+        assertTrue(result.getRecord().isWhitelistAdded(), "回读到正确条目才算本次写入");
         assertEquals(List.of("fwhitelist add MakurokiTomoko"), adapter.executed);
         assertEquals(".MakurokiTomoko", result.getRecord().getGameName(), "记录里仍保留带前缀的游戏名");
-        assertEquals(0, adapter.whitelistReads, "基岩版不该由插件直接读写白名单文件");
+    }
+
+    @Test
+    @DisplayName("基岩版：fwhitelist 没写进白名单时判失败，不再谎报成功")
+    void geyserRejectsWhenFloodgateDidNotWrite(@TempDir Path dir) {
+        FakeAdapter adapter = new FakeAdapter(dir.resolve("whitelist.json"), false);
+        adapter.floodgate = true;
+        BindingService service = newService(dir, adapter);
+
+        BindingService.Result result = service.bind("qq", "10008", "ikarMing", true);
+
+        // 这正是线上事故：fwhitelist 只打印 "Unable to find user in our cache"、不改白名单，
+        // 而 executeCommand 恒返回 true。必须判失败，否则玩家永远被白名单拒绝。
+        assertFalse(result.isSuccess(), "白名单没写成必须判失败");
+        assertEquals(BindingService.Rejection.WHITELIST_FAILED, result.getRejection());
+    }
+
+    @Test
+    @DisplayName("基岩版：白名单里是离线 UUID（历史坏条目）时判失败")
+    void geyserRejectsWrongUuid(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("whitelist.json");
+        WhitelistFile.upsert(file, "ikarMing", WhitelistFile.offlineUuid("ikarMing"));
+        FakeAdapter adapter = new FakeAdapter(file, false);
+        adapter.floodgate = true;
+        BindingService service = newService(dir, adapter);
+
+        BindingService.Result result = service.bind("qq", "10009", "ikarMing", true);
+
+        assertFalse(result.isSuccess(), "名字在册但 UUID 不是 Floodgate 身份，同样进不去，必须判失败");
+        assertEquals(BindingService.Rejection.WHITELIST_FAILED, result.getRejection());
+    }
+
+    @Test
+    @DisplayName("基岩版：玩家在线时用其真实 Floodgate UUID 直写白名单")
+    void geyserOnlinePlayerWritesRealUuid(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("whitelist.json");
+        FakeAdapter adapter = new FakeAdapter(file, false);
+        adapter.floodgate = true;
+        adapter.onlinePlayerName = ".ikarMing";
+        adapter.onlinePlayerUuid = UUID.fromString("00000000-0000-0000-0009-01fdc1b824e8");
+        BindingService service = newService(dir, adapter);
+
+        BindingService.Result result = service.bind("qq", "10010", "ikarMing", true);
+
+        assertTrue(result.isSuccess());
+        assertEquals(adapter.onlinePlayerUuid, WhitelistFile.findUuid(file, ".ikarMing"),
+                "必须写玩家真实的 Floodgate UUID");
+        assertTrue(adapter.executed.isEmpty(), "玩家在线时不该再依赖 fwhitelist 的名字解析");
     }
 
     @Test
     @DisplayName("基岩版：没有 Floodgate 时退回 whitelist add")
-    void geyserFallsBackWithoutFloodgate(@TempDir Path dir) {
-        FakeAdapter adapter = new FakeAdapter(dir.resolve("whitelist.json"), false);
+    void geyserFallsBackWithoutFloodgate(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("whitelist.json");
+        WhitelistFile.upsert(file, "Slandre", FLOODGATE_UID);
+        FakeAdapter adapter = new FakeAdapter(file, false);
         BindingService service = newService(dir, adapter);
 
         BindingService.Result result = service.bind("qq", "10007", "Slandre", true);
@@ -180,6 +239,9 @@ class BindingServiceWhitelistTest {
         private boolean floodgate;
         private int reloads;
         private int whitelistReads;
+        /** 非 null 时表示该名字的玩家在线，{@link #getPlayer(String)} 会返回它 */
+        private String onlinePlayerName;
+        private UUID onlinePlayerUuid;
 
         private FakeAdapter(Path whitelistFile, boolean onlineMode) {
             this.whitelistFile = whitelistFile;
@@ -221,7 +283,46 @@ class BindingServiceWhitelistTest {
 
         @Override
         public Optional<CommonPlayer> getPlayer(String name) {
-            return Optional.empty();
+            if (onlinePlayerName == null || !onlinePlayerName.equalsIgnoreCase(name)) {
+                return Optional.empty();
+            }
+            String resolvedName = onlinePlayerName;
+            UUID resolvedUuid = onlinePlayerUuid;
+            return Optional.of(new CommonPlayer() {
+                @Override
+                public UUID getUniqueId() {
+                    return resolvedUuid;
+                }
+
+                @Override
+                public String getName() {
+                    return resolvedName;
+                }
+
+                @Override
+                public String getDisplayName() {
+                    return resolvedName;
+                }
+
+                @Override
+                public int getPing() {
+                    return 0;
+                }
+
+                @Override
+                public void sendMessage(String message) {
+                }
+
+                @Override
+                public boolean hasPermission(String permission) {
+                    return false;
+                }
+
+                @Override
+                public boolean isOnline() {
+                    return true;
+                }
+            });
         }
 
         @Override

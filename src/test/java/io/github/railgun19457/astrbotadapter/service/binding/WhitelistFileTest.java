@@ -51,6 +51,23 @@ class WhitelistFileTest {
     }
 
     @Test
+    @DisplayName("Floodgate UUID 判定：高 64 位为 0（即 XUID 本身）且非零")
+    void floodgateUuidDetection() {
+        // 实测自服务器：两个基岩玩家的 Floodgate UUID，都是「高 64 位为 0、低 64 位是 XUID」
+        assertTrue(WhitelistFile.isFloodgateUuid(
+                UUID.fromString("00000000-0000-0000-0009-01f3e2933322")), ".Slandre5167");
+        assertTrue(WhitelistFile.isFloodgateUuid(
+                UUID.fromString("00000000-0000-0000-0009-01fdc1b824e8")), ".ikarMing");
+
+        // 按名字推导的离线 UUID（v3）与正版 UUID（v4）都不是 Floodgate 身份
+        assertFalse(WhitelistFile.isFloodgateUuid(WhitelistFile.offlineUuid("ikarMing")));
+        assertFalse(WhitelistFile.isFloodgateUuid(MOJANG_MAKUROKI));
+        assertFalse(WhitelistFile.isFloodgateUuid(
+                UUID.fromString("00000000-0000-0000-0000-000000000000")), "全零不是有效身份");
+        assertFalse(WhitelistFile.isFloodgateUuid(null));
+    }
+
+    @Test
     @DisplayName("文件缺失或为空按空名单处理")
     void missingOrEmptyFileIsTreatedAsEmptyList(@TempDir Path dir) throws IOException {
         Path missing = dir.resolve("whitelist.json");

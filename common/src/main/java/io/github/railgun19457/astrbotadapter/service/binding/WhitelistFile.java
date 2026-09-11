@@ -54,6 +54,26 @@ public final class WhitelistFile {
         return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * 判断该 UUID 是不是 Floodgate 为基岩版玩家生成的（而不是按名字推导的离线 UUID）。
+     *
+     * <p>Floodgate 生成的 UUID 就是 <b>XUID 本身</b>：高 64 位恒为 0，低 64 位是 XUID。
+     * 实测自本服（XUID 与 UUID 均来自真实数据，XUID 经 api.geysermc.org 反查核对）：
+     * {@code xuid=2535421780374306 -> 0x000901f3e2933322 -> UUID 低 64 位}，
+     * 于是白名单里的形状是 {@code 00000000-0000-0000-0009-01f3e2933322}
+     * ——前 12 位十六进制全 0，{@code 0009} 是第 4 段的前半（XUID 的高 4 字节）。
+     * 离线 UUID 是 v3（md5 派生）或正版 UUID 是 v4，高 64 位都带版本/变体位，不可能为 0。
+     *
+     * <p>只用于白名单回读校验：把离线 UUID 写进基岩玩家的白名单条目，等于玩家永远进不来。
+     */
+    public static boolean isFloodgateUuid(UUID uuid) {
+        if (uuid == null) {
+            return false;
+        }
+        return uuid.getMostSignificantBits() == 0L
+                && uuid.getLeastSignificantBits() != 0L;
+    }
+
     /** 读取全部条目（保持文件顺序）；文件缺失或为空视作空数组。 */
     public static List<Entry> read(Path file) throws IOException {
         if (file == null || !Files.isRegularFile(file)) {
