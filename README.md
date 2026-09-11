@@ -6,7 +6,7 @@
 
 **连接 Minecraft 服务器与 AstrBot** —— 消息互通 · 服务器状态监控 · 远程指令执行 · 游戏内 AI 聊天 · 群友绑定白名单
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_NeoForge)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_NeoForge)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%2026.2-orange.svg)](https://www.minecraft.net/)
 [![Forge](https://img.shields.io/badge/Forge-47.x-green.svg)](https://files.minecraftforge.net/)
 [![NeoForge](https://img.shields.io/badge/NeoForge-26.2-green.svg)](https://neoforged.net/)
@@ -91,7 +91,7 @@
 
 ### 第一步：下载 mod
 
-从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.1.0-mc26.2.jar`。
+从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.2.0-mc26.2.jar`。
 
 ### 第二步：安装
 1. 将 jar 放入服务端 `mods/` 目录
@@ -382,7 +382,7 @@ src/       NeoForge 26.2 专属层：平台适配器 + 事件监听 + neoforge.m
 需要 **JDK 25**（Minecraft 26.2 的运行时要求）：
 
 ```bash
-./gradlew build          // 产物：build/libs/astrbotadapter-1.1.0+mc26.2.jar
+./gradlew build          // 产物：build/libs/astrbotadapter-1.2.0+mc26.2.jar
 ```
 
 首次构建会下载 Gradle 9.2.1、Minecraft 26.2 与 NeoForge，并反编译 Minecraft 源码，耗时较长（约 10 分钟以上）。
