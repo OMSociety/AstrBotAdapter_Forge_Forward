@@ -91,7 +91,7 @@
 
 ### 第一步：下载 mod
 
-从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.2.0-mc26.2.jar`。
+从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.2.0.mc26.2.jar`。
 
 ### 第二步：安装
 1. 将 jar 放入服务端 `mods/` 目录
