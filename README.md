@@ -91,8 +91,8 @@
 
 从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/releases) 选择与你的服务端对应的文件：
 
-- Forge 1.20.1 → `astrbotadapter-1.1.0+mc1.20.1-all.jar`
-- NeoForge 26.2 → `astrbotadapter-1.1.0+mc26.2.jar`
+- Forge 1.20.1 → `astrbotadapter-1.1.0-mc1.20.1-all.jar`
+- NeoForge 26.2 → `astrbotadapter-1.1.0-mc26.2.jar`
 
 ### 第二步：安装
 1. 将对应 jar 放入服务端 `mods/` 目录
@@ -388,7 +388,6 @@ cd loader/forge-1.20.1
 cd loader/neoforge-26.2
 ./gradlew build          // 产物：build/libs/astrbotadapter-1.1.0+mc26.2.jar
 ```
-
 首次构建会下载对应版本的 Gradle、Minecraft 与加载器依赖，耗时较长。
 若网络需要代理，可在 `loader/<加载器>/gradle.properties` 里设置 `systemProp.http(s).proxyHost/Port`（对 Gradle 进程及所有仓库生效）。
 
