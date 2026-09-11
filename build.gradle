@@ -82,6 +82,19 @@ dependencies {
     jarJar(implementation('io.netty:netty-codec-http:4.1.115.Final'))
 
     jarJar(implementation('org.yaml:snakeyaml:2.3'))
+
+    // 单元测试只覆盖平台无关的纯逻辑（离线 UUID 推导、whitelist.json 读改写），不需要 Minecraft
+    // 运行时。Gson 来自 MC 依赖、不会经 main 的 api/implementation 传到测试编译路径，故显式声明。
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.14.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'com.google.code.gson:gson:2.10.1'
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+    }
 }
 
 // 生成 neoforge.mods.toml（${...} 占位符在构建期展开）

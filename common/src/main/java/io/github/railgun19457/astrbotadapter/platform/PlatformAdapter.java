@@ -4,6 +4,7 @@ import io.github.railgun19457.astrbotadapter.platform.common.CommonPlayer;
 import io.github.railgun19457.astrbotadapter.platform.common.CommonScheduler;
 import io.github.railgun19457.astrbotadapter.platform.common.CommonServer;
 
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -115,6 +116,47 @@ public interface PlatformAdapter {
      * @return 是否执行成功
      */
     boolean executeCommand(CommonPlayer player, String command);
+
+    // ===== 白名单 =====
+
+    /**
+     * 服务器是否开启正版验证（online-mode）。
+     *
+     * <p>离线（online-mode=false）时按用户名执行 {@code whitelist add} 会拿到 Mojang 的正版 UUID，
+     * 而玩家登录用的是本地推导的离线 UUID，两者不符 → 白名单永远匹配不上。此时绑定服务必须改走
+     * {@link #getWhitelistFile()} 直接读写白名单文件。默认 true 表示走指令路径（与历史行为一致）。</p>
+     */
+    default boolean isOnlineMode() {
+        return true;
+    }
+
+    /**
+     * 白名单文件（{@code whitelist.json}）路径；平台不支持直接读写时返回 null。
+     */
+    default Path getWhitelistFile() {
+        return null;
+    }
+
+    /**
+     * 让服务端从磁盘重新载入白名单（等价于执行 {@code /whitelist reload}）。
+     *
+     * <p>直接改过白名单文件后必须调用：否则服务端内存里仍是旧名单（新玩家照样进不来），
+     * 且内存名单下一次保存会把刚写入的文件覆盖回去。</p>
+     *
+     * @return 是否重载成功
+     */
+    default boolean reloadWhitelist() {
+        return false;
+    }
+
+    /**
+     * 是否可用 Floodgate 的 {@code fwhitelist} 指令。
+     *
+     * <p>基岩版 UUID 由 Bedrock XUID 生成，本地算不出来，只能交给 Floodgate 自己写白名单。</p>
+     */
+    default boolean isFloodgateAvailable() {
+        return false;
+    }
 
     // ===== 调度器 =====
 

@@ -6,7 +6,7 @@
 
 **连接 Minecraft 服务器与 AstrBot** —— 消息互通 · 服务器状态监控 · 远程指令执行 · 游戏内 AI 聊天 · 群友绑定白名单
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_NeoForge)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/OMSociety/AstrBotAdapter_NeoForge)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%2026.2-orange.svg)](https://www.minecraft.net/)
 [![Forge](https://img.shields.io/badge/Forge-47.x-green.svg)](https://files.minecraftforge.net/)
 [![NeoForge](https://img.shields.io/badge/NeoForge-26.2-green.svg)](https://neoforged.net/)
@@ -91,7 +91,7 @@
 
 ### 第一步：下载 mod
 
-从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.1.0-mc26.2.jar`。
+从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_NeoForge/releases) 下载 `astrbotadapter-1.2.0-mc26.2.jar`。
 
 ### 第二步：安装
 1. 将 jar 放入服务端 `mods/` 目录
@@ -143,6 +143,19 @@ binding:
 | 只解除基岩版绑定 | `/mc geyserunbind` |
 
 > 一个群友**可以同时持有 Java 版与基岩版两条绑定**，服务器白名单里会出现两个条目（例如 `Steve` 与 `.Steve`），两者互不覆盖、可分别单独更换或解除。这对「同一个人的电脑版和手机版都要进服」的场景是必需的。
+
+### 白名单的 UUID 是怎么定的
+
+白名单按 UUID 匹配，而 `/whitelist add <名字>` 在离线模式下会写出**错的** UUID（服务端查不到 usercache 时会向 Mojang 名字 API 查询，把正版 UUID 写进去，而离线客户端登录用的是本地推导的 UUID）。因此本模组区分处理：
+
+| 服务端设置 | Java 版绑定的写入方式 | 结果 |
+|------|------|------|
+| `online-mode=true`（正版验证） | `/whitelist add <名字>` | 服务端写入的正是玩家登录用的 UUID |
+| `online-mode=false`（离线/盗版服） | 直接读改写工作目录的 `whitelist.json` 并 `/whitelist reload` | 写入本地推导的离线 UUID；同名但 UUID 不符的旧条目会被就地修正 |
+
+基岩版（`kind=geyser`）的 UUID 由 Bedrock XUID 生成，本地推导不出来，改用 Floodgate 的 `fwhitelist add <名字>`（名字不带前缀）；服务器没装 Floodgate 时会退回 `whitelist add` 并在日志里明确警告。
+
+> 💡 若某位群友绑定后仍提示 `You are not white-listed on this server!`，让他**重新发一次 `/mc bind <游戏ID>`** 即可：新版本会把白名单里那条错误 UUID 改成正确的离线 UUID。
 
 ### 基岩版（Geyser + Floodgate）兼容说明
 
@@ -382,7 +395,7 @@ src/       NeoForge 26.2 专属层：平台适配器 + 事件监听 + neoforge.m
 需要 **JDK 25**（Minecraft 26.2 的运行时要求）：
 
 ```bash
-./gradlew build          // 产物：build/libs/astrbotadapter-1.1.0+mc26.2.jar
+./gradlew build          // 产物：build/libs/astrbotadapter-1.2.0+mc26.2.jar
 ```
 
 首次构建会下载 Gradle 9.2.1、Minecraft 26.2 与 NeoForge，并反编译 Minecraft 源码，耗时较长（约 10 分钟以上）。

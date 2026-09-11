@@ -10,6 +10,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
+import java.io.File;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -194,6 +196,35 @@ public class NeoForgePlatformAdapter implements PlatformAdapter {
     @Override
     public CommonScheduler getScheduler() {
         return scheduler;
+    }
+
+    // ===== 白名单 =====
+
+    @Override
+    public boolean isOnlineMode() {
+        return server.usesAuthentication();
+    }
+
+    @Override
+    public Path getWhitelistFile() {
+        // 直接取服务端白名单实例持有的 File：MC 用的是相对路径 new File("whitelist.json")，
+        // 按进程工作目录解析；沿用这个实例能保证与服务器读写的是同一份文件。
+        File file = server.getPlayerList().getWhiteList().getFile();
+        return file == null ? null : file.getAbsoluteFile().toPath();
+    }
+
+    @Override
+    public boolean reloadWhitelist() {
+        // /whitelist reload：让服务端从磁盘重载内存名单。它同时会踢出未在白名单的在线玩家，
+        // 与管理员手动执行该指令的行为一致。
+        return executeCommand("whitelist reload");
+    }
+
+    @Override
+    public boolean isFloodgateAvailable() {
+        // 以指令是否存在判定：基岩版 UUID 由 Floodgate 依 XUID 生成，本地算不出来，
+        // 没有这条指令就只能退回 /whitelist add。
+        return server.getCommands().getDispatcher().getRoot().getChild("fwhitelist") != null;
     }
 
     @Override

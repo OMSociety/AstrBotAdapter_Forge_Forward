@@ -776,10 +776,16 @@ Rules：
 
 ### 5.4 行为约定
 
-- 白名单写入使用控制台身份执行 `whitelist add <gameName>`，**不受 `commandExecution` 过滤器影响**。
+- 白名单写入**不受 `commandExecution` 过滤器影响**，具体路径取决于服务器是否开启正版验证：
+  - `online-mode=true`：以控制台身份执行 `whitelist add <gameName>`，服务端写入的正是玩家登录用的正版 UUID。
+  - `online-mode=false`（离线模式）：直接读改写服务器工作目录的 `whitelist.json`（顶层数组，每项只有 `uuid` 与 `name`），
+    写入 `OfflinePlayer:<名字>` 推导出的离线 UUID，随后执行 `/whitelist reload` 同步内存名单。
+    这条路径不能用 `whitelist add <名字>` 代替：服务端查不到 usercache 时会向 Mojang 名字 API 查询，把正版 UUID 写进白名单，
+    与离线客户端登录用的 UUID 不符，该玩家会被永久拒之门外。同名但 UUID 不符的旧条目会被就地改写为正确的离线 UUID。
+  - 基岩版（`kind=geyser`）：UUID 由 Bedrock XUID 生成、本地无法推导，改用 Floodgate 的 `fwhitelist add <名字>`（名字不带 Geyser 前缀）。
 - 白名单在登录阶段校验，因此绑定不会影响已在线玩家，仅在其下次登录时生效。
 - 玩家不在线时也允许绑定：按 `binding.geyser` 规则推导最终名字后直接写入白名单。
-- 服务器上本来就有同名白名单条目时，解绑不会移除它（只有绑定自己写入的条目才回收）。
+- 服务器上本来就有同名白名单条目且 UUID 正确时，绑定照常成功但 `whitelistAdded` 为 `false`，解绑不会移除它（只有绑定自己写入的条目才回收）。
 
 ## 6. Operational Notes
 

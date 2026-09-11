@@ -4,6 +4,8 @@ import io.github.railgun19457.astrbotadapter.core.config.PluginConfig;
 import io.github.railgun19457.astrbotadapter.platform.PlatformAdapter;
 import io.github.railgun19457.astrbotadapter.platform.common.CommonPlayer;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -122,15 +124,21 @@ public final class BindingService {
         record.setGameName(resolved.name());
         record.setFloodgate(resolved.floodgate());
         record.setJavaUuid(resolved.uuid() == null ? "" : resolved.uuid().toString());
+        // 离线模式的 Java 版 UUID 就是按名字推导的离线 UUID：写进记录，接口返回值可直接用来核对白名单
+        if (BindingRecord.KIND_JAVA.equals(kind) && !platformAdapter.isOnlineMode()) {
+            record.setJavaUuid(WhitelistFile.offlineUuid(resolved.name()).toString());
+        }
 
         boolean whitelistAdded = false;
         if (config.isBindingApplyToWhitelist()) {
-            whitelistAdded = applyWhitelistAdd(resolved.name());
-            if (!whitelistAdded) {
+            WhitelistOutcome outcome = applyWhitelistAdd(resolved.name(), kind);
+            if (outcome == WhitelistOutcome.FAILED) {
                 return Result.rejected(Rejection.WHITELIST_FAILED, resolved.name());
             }
+            whitelistAdded = outcome == WhitelistOutcome.ADDED_BY_US;
         }
-        // 白名单里本来就有同名条目时，保持原有「非本绑定写入」的归属，解绑时不动它
+        // 白名单里本来就有该名字且 UUID 正确时（管理员手工添加），保持原有「非本绑定写入」的归属，
+        // 解绑时不动它
         if (existing == null || !existing.isWhitelistAdded()) {
             record.setWhitelistAdded(whitelistAdded);
         }
@@ -279,30 +287,184 @@ public final class BindingService {
         return new ArrayList<>(candidates);
     }
 
-    private boolean applyWhitelistAdd(String name) {
-        boolean success = platformAdapter.executeCommand("whitelist add " + name);
-        if (!success) {
-            logger.warning("加入白名单失败: " + name + "（请确认服务器已开启 white-list，且指令未被其它插件拦截）");
-            return false;
+    private WhitelistOutcome applyWhitelistAdd(String name, String kind) {
+        if (BindingRecord.isGeyser(kind)) {
+            return applyFloodgateWhitelistAdd(name);
         }
-        return true;
+        if (platformAdapter.isOnlineMode()) {
+            return applyWhitelistCommand(name);
+        }
+        return applyOfflineWhitelistAdd(name);
+    }
+
+    /**
+     * 正版验证开启时的路径：{@code whitelist add <名字>} 得到的正是玩家登录用的 UUID，保持原有机制。
+     *
+     * <p>该指令对已在白名单里的名字是空操作（服务端不改写已有条目的 UUID，只回一句 already whitelisted），
+     * 所以写入前先看文件里有没有同名条目：有则说明它不是本次绑定写入，据此交出 whitelistAdded 归属，
+     * 避免解绑时误删管理员手工添加的条目。</p>
+     */
+    private WhitelistOutcome applyWhitelistCommand(String name) {
+        boolean existed = false;
+        Path file = platformAdapter.getWhitelistFile();
+        if (file != null) {
+            try {
+                existed = WhitelistFile.findUuid(file, name) != null;
+            } catch (IOException e) {
+                logger.warning("读取白名单文件失败，无法判定条目归属: " + name + "（" + e.getMessage() + "）");
+            }
+        }
+        if (!platformAdapter.executeCommand("whitelist add " + name)) {
+            logger.warning("加入白名单失败: " + name + "（请确认服务器已开启 white-list，且指令未被其它插件拦截）");
+            return WhitelistOutcome.FAILED;
+        }
+        return existed ? WhitelistOutcome.ALREADY_PRESENT : WhitelistOutcome.ADDED_BY_US;
+    }
+
+    /**
+     * 离线模式 + Java 版：不依赖 {@code /whitelist add <名字>}，直接读改写白名单文件。
+     *
+     * <p>服务端解析名字时会查 Mojang 名字 API，把正版 UUID 写进白名单，与离线登录用的 UUID 不符。</p>
+     */
+    private WhitelistOutcome applyOfflineWhitelistAdd(String name) {
+        Path file = platformAdapter.getWhitelistFile();
+        if (file == null) {
+            logger.warning("当前平台不支持读写白名单文件，离线模式下无法写入正确的离线 UUID: " + name);
+            return WhitelistOutcome.FAILED;
+        }
+
+        UUID uuid = WhitelistFile.offlineUuid(name);
+        try {
+            WhitelistFile.Change change = WhitelistFile.upsert(file, name, uuid);
+            if (!reloadWhitelist()) {
+                return WhitelistOutcome.FAILED;
+            }
+            // 重载后重新读回校验：服务端内存名单（下次保存时的来源）必须就是这条离线 UUID
+            UUID written = WhitelistFile.findUuid(file, name);
+            if (!uuid.equals(written)) {
+                logger.warning("白名单写入校验失败: " + name + " 期望 " + uuid + "，实际 " + written);
+                return WhitelistOutcome.FAILED;
+            }
+            if (change == WhitelistFile.Change.PRESENT) {
+                return WhitelistOutcome.ALREADY_PRESENT;
+            }
+            if (change == WhitelistFile.Change.REPLACED) {
+                logger.info("已修正白名单中 " + name + " 的 UUID（原条目与离线登录不符）");
+            }
+            return WhitelistOutcome.ADDED_BY_US;
+        } catch (IOException e) {
+            logger.warning("写入白名单文件失败: " + file + "（" + e.getMessage() + "）");
+            return WhitelistOutcome.FAILED;
+        }
+    }
+
+    /**
+     * 基岩版（Geyser + Floodgate）：UUID 由 Bedrock XUID 生成，本地推导不出来，只能交给 Floodgate。
+     *
+     * <p>实测本版 Floodgate 的 {@code fwhitelist} 不接受 UUID 参数，只能用用户名形式（且不带 Geyser 前缀）。</p>
+     */
+    private WhitelistOutcome applyFloodgateWhitelistAdd(String name) {
+        if (platformAdapter.isFloodgateAvailable()) {
+            return runWhitelistCommand("fwhitelist add " + floodgateName(name), name);
+        }
+        logger.warning("未检测到 Floodgate 的 fwhitelist 指令，基岩版白名单退回 /whitelist add "
+                + floodgateName(name) + "（该路径下服务端可能写入与基岩玩家不匹配的 UUID，请确认 Floodgate 已装好）");
+        return runWhitelistCommand("whitelist add " + floodgateName(name), name);
+    }
+
+    private WhitelistOutcome runWhitelistCommand(String command, String name) {
+        if (!platformAdapter.executeCommand(command)) {
+            logger.warning("加入白名单失败: " + name + "（请确认服务器已开启 white-list，且指令未被其它插件拦截）");
+            return WhitelistOutcome.FAILED;
+        }
+        return WhitelistOutcome.ADDED_BY_US;
+    }
+
+    private boolean reloadWhitelist() {
+        if (platformAdapter.reloadWhitelist()) {
+            return true;
+        }
+        logger.warning("白名单重载失败，服务端内存名单仍是旧的，且下次保存会覆盖刚写入的文件");
+        return false;
+    }
+
+    /** Floodgate 的 fwhitelist 用不带 Geyser 前缀的玩家名 */
+    private String floodgateName(String name) {
+        String prefix = config.getGeyserPrefix();
+        if (prefix == null || prefix.isEmpty() || !name.startsWith(prefix)) {
+            return name;
+        }
+        String stripped = name.substring(prefix.length());
+        return stripped.isEmpty() ? name : stripped;
     }
 
     /**
      * 仅在「该条目由绑定写入」时移除白名单，避免误删管理员手工添加的同名条目。
+     *
+     * <p>离线模式下不能再用 {@code whitelist remove <名字>}：它同样会把名字解析成别的 UUID。</p>
      */
     private boolean releaseWhitelistEntry(BindingRecord record) {
         if (record == null || !record.isWhitelistAdded()) {
             return false;
         }
-        boolean success = platformAdapter.executeCommand("whitelist remove " + record.getGameName());
+        if (record.isGeyser()) {
+            return releaseFloodgateWhitelistEntry(record.getGameName());
+        }
+        if (platformAdapter.isOnlineMode()) {
+            return removeByCommand("whitelist remove", record.getGameName());
+        }
+        return releaseOfflineWhitelistEntry(record.getGameName());
+    }
+
+    private boolean releaseFloodgateWhitelistEntry(String name) {
+        if (platformAdapter.isFloodgateAvailable()) {
+            return removeByCommand("fwhitelist remove", floodgateName(name));
+        }
+        logger.warning("未检测到 Floodgate 的 fwhitelist 指令，退回 /whitelist remove "
+                + floodgateName(name));
+        return removeByCommand("whitelist remove", floodgateName(name));
+    }
+
+    private boolean removeByCommand(String command, String name) {
+        boolean success = platformAdapter.executeCommand(command + " " + name);
         if (!success) {
-            logger.warning("从白名单移除失败: " + record.getGameName());
+            logger.warning("从白名单移除失败: " + name);
         }
         return success;
     }
 
+    private boolean releaseOfflineWhitelistEntry(String name) {
+        Path file = platformAdapter.getWhitelistFile();
+        if (file == null) {
+            logger.warning("当前平台不支持读写白名单文件，无法按 UUID 移除离线模式白名单条目: " + name);
+            return false;
+        }
+        try {
+            if (!WhitelistFile.remove(file, name, WhitelistFile.offlineUuid(name))) {
+                // 文件里已经没有这条了：视作已回收，否则记录会永远留在 bindings.json 里回收不掉
+                logger.info("白名单中已无 " + name + " 的条目，无需移除");
+                return true;
+            }
+            return reloadWhitelist();
+        } catch (IOException e) {
+            logger.warning("移除白名单文件条目失败: " + name + "（" + e.getMessage() + "）");
+            return false;
+        }
+    }
+
     // ===== 结果类型 =====
+
+    /**
+     * 白名单写入结果。
+     *
+     * <p>必须区分「失败」与「本来就有正确条目」：后者（管理员手工加过白名单）绑定应当照常成功，
+     * 只是该条目不算本次绑定写入，解绑时不能删。</p>
+     */
+    private enum WhitelistOutcome {
+        ADDED_BY_US,
+        ALREADY_PRESENT,
+        FAILED
+    }
 
     /** 拒绝原因（供上层翻译成 HTTP 错误码与提示文案） */
     public enum Rejection {
