@@ -79,26 +79,25 @@
 
 ### 兼容性
 
-| 加载器 | Minecraft | 构建插件 | JDK（构建） | JDK（运行服务端） |
-|--------|-----------|---------|------------|------------------|
-| **Forge** | 1.20.1（Forge 47.x） | ForgeGradle 6 | 17 | 17 |
-| **NeoForge** | 26.2（NeoForge 26.2.0.x） | ModDevGradle 2 | 25 | 25 |
+| 加载器 | Minecraft | NeoForge | 构建插件 | JDK（构建 / 运行） |
+|--------|-----------|----------|---------|-------------------|
+| **NeoForge** | 26.2 | 26.2.0.80 | ModDevGradle 2 | 25 |
 
 > 仅服务端安装，客户端无需安装（`displayTest = IGNORE_ALL_VERSION`）。
-> 两个加载器共用同一套协议与配置格式，MaiBot 插件对两者都兼容。
+
+> [!NOTE]
+> 本仓库只做 **NeoForge 26.2**。Forge 1.20.1 版本在 [AstrBotAdapter_Forge](https://github.com/OMSociety/AstrBotAdapter_Forge)。
+> 两者共用同一套协议与配置格式，MaiBot 插件对两者都兼容。
 
 ### 第一步：下载 mod
 
-从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/releases) 选择与你的服务端对应的文件：
-
-- Forge 1.20.1 → `astrbotadapter-1.1.0-mc1.20.1-all.jar`
-- NeoForge 26.2 → `astrbotadapter-1.1.0-mc26.2.jar`
+从 [GitHub Releases](https://github.com/OMSociety/AstrBotAdapter_Forge_Forward/releases) 下载 `astrbotadapter-1.1.0-mc26.2.jar`。
 
 ### 第二步：安装
-1. 将对应 jar 放入服务端 `mods/` 目录
+1. 将 jar 放入服务端 `mods/` 目录
 2. 启动服务器，首次启动自动生成配置 `config/astrbotadapter/config.yml`
 
-> 从 1.0.0 升级：直接替换 jar 即可，配置文件与格式不变，新增的 `binding` 配置节会自动补齐（默认关闭）。
+> 从 Forge 1.20.1 版本迁移过来时，配置文件键名与格式一致，`config/astrbotadapter/config.yml` 可直接复用。
 
 ### 第三步：连接 MaiBot
 
@@ -343,16 +342,16 @@ binding:
 
 ## 🧩 架构
 
-### 仓库结构（一套代码，两个加载器）
+### 仓库结构
 
 ```
-common/                       平台无关代码：通信层、配置、服务、绑定逻辑（零 Minecraft 依赖）
-loader/forge-1.20.1/          Forge 1.20.1：平台适配器 + 事件监听 + mods.toml
-loader/neoforge-26.2/         NeoForge 26.2：平台适配器 + 事件监听 + neoforge.mods.toml
+common/    平台无关代码：通信层、配置、服务、绑定逻辑（零 Minecraft 依赖）
+src/       NeoForge 26.2 专属层：平台适配器 + 事件监听 + neoforge.mods.toml
 ```
 
-两个加载器通过 Gradle `sourceSets` 直接编译 `common/`，因此**共用代码只有一份**，不存在双份源码需要同步的问题；差异被压缩在平台适配层。
-两个加载器各自是独立的 Gradle 构建根（它们要求的 Gradle 主版本和 JDK 不同），互不干扰。
+构建时通过 Gradle `sourceSets` 把 `common/` 与 `src/` 一起编译，因此**共用代码只有一份**，
+平台差异被压缩在 `src/main/java/.../platform/neoforge` 这一层；
+`common/` 因此可以原样复用给其它加载器（Forge、Paper 等）而无需复制源码。
 
 ### 通信层（Netty）
 基于 Netty 的 WS + REST 双通道服务，与平台完全解耦：
@@ -377,24 +376,37 @@ loader/neoforge-26.2/         NeoForge 26.2：平台适配器 + 事件监听 + n
 
 ## 🔧 从源码构建
 
-两个加载器各自独立构建，需要各自对应的 JDK（Forge 用 17，NeoForge 用 25）：
+需要 **JDK 25**（Minecraft 26.2 的运行时要求）：
 
 ```bash
-// Forge 1.20.1（JDK 17）
-cd loader/forge-1.20.1
-./gradlew build          // 产物：build/libs/astrbotadapter-1.1.0+mc1.20.1-all.jar
-
-// NeoForge 26.2（JDK 25）
-cd loader/neoforge-26.2
 ./gradlew build          // 产物：build/libs/astrbotadapter-1.1.0+mc26.2.jar
 ```
-首次构建会下载对应版本的 Gradle、Minecraft 与加载器依赖，耗时较长。
-若网络需要代理，可在 `loader/<加载器>/gradle.properties` 里设置 `systemProp.http(s).proxyHost/Port`（对 Gradle 进程及所有仓库生效）。
 
-> ⚠️ **NeoForge 26.2 构建的已知上游问题**：`neoforge 26.2.0.87` 的 userdev access transformer 里有一条已失效的条目
+首次构建会下载 Gradle 9.2.1、Minecraft 26.2 与 NeoForge，并反编译 Minecraft 源码，耗时较长（约 10 分钟以上）。
+
+**网络需要代理时**，两种写法都要给（缺一不可）：
+
+```bash
+# 1) Gradle 自身的依赖解析与插件解析：写在 gradle.properties
+systemProp.http.proxyHost=127.0.0.1
+systemProp.http.proxyPort=7897
+systemProp.https.proxyHost=127.0.0.1
+systemProp.https.proxyPort=7897
+
+# 2) NeoFormRuntime 会另起子进程下载工具依赖，它只认环境变量：
+HTTP_PROXY=http://127.0.0.1:7897
+HTTPS_PROXY=http://127.0.0.1:7897
+```
+
+> 本仓库的 `gradle.properties` 已按本机 Clash 代理（`127.0.0.1:7897`）预置了这两组配置
+> （代理同时写进 `org.gradle.jvmargs`，因为 NeoFormRuntime 的工具子进程不继承 Gradle 的 systemProp）。
+> **不需要代理时请把 `gradle.properties` 里的 `systemProp.*proxy*` 与 `org.gradle.jvmargs` 中的 `-D*.proxy*` 一并删掉**，否则会连不上。
+
+> ℹ️ **NeoForge 版本已固定在 `26.2.0.80`**，不是最新的 `26.2.0.87`。
+> 原因：`26.2.0.87` 的 userdev access transformer 含一条失效条目
 > `public net.minecraft.core.HolderSet$1 contents()Ljava/util/List;`（该匿名类在 26.2 中已不存在），
-> 会导致 `:createMinecraftArtifacts` 的反编译阶段失败。该条目在未发布的 26.3 分支上已被删除。
-> 受影响的只有「从源码构建」；本仓库 Release 里提供的 jar 是构建产物，使用不受影响。
+> 会让 `:createMinecraftArtifacts` 的反编译阶段必然失败；`26.2.0.80` 没有这条 AT，可干净构建。
+> 该条目在未发布的 26.3 分支上已被删除，等 NeoForge 发布修复版后可以升回去（改 `gradle.properties` 的 `neo_version` 即可）。
 
 ---
 

@@ -1,4 +1,4 @@
-// NeoForge 26.2 加载器（ModDevGradle 2）。
+// NeoForge 26.2（ModDevGradle 2）。
 // 平台无关代码位于仓库根的 common/，本工程通过 sourceSets 直接编译它，
 // 因此共用代码只有一份、无需跨工程发布产物。
 plugins {
@@ -9,7 +9,7 @@ plugins {
 }
 
 // 仓库级共享属性（mod_version / mod_id / mod_name 等）
-apply from: '../../gradle-shared.gradle'
+apply from: './gradle-shared.gradle'
 
 version = "${mod_version}+mc${minecraft_version}"
 group = mod_group_id
@@ -25,10 +25,10 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 sourceSets {
     main {
         java {
-            srcDirs = [file('../../common/src/main/java'), file('src/main/java')]
+            srcDirs = [file('common/src/main/java'), file('src/main/java')]
         }
         resources {
-            srcDirs = [file('../../common/src/main/resources'), file('src/main/resources')]
+            srcDirs = [file('common/src/main/resources'), file('src/main/resources')]
         }
     }
 }
