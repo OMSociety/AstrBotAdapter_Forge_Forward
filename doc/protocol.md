@@ -47,12 +47,13 @@ WebSocket 和 REST 共享同一个 Java 插件监听端口，默认 `8765`。
     "command.async-result",
     "command.target-server-id",
     "command.ws-session-reply",
-    "ws.disconnect"
+    "ws.disconnect",
+    "binding.v1"
   ]
 }
 ```
 
-客户端应优先根据 `protocolVersion` 与 `features` 判断能力，不依赖插件版本号。
+客户端应优先根据 `protocolVersion` 与 `features` 判断能力，不依赖插件版本号。`binding.v1` 表示本节点提供群友绑定与白名单写入能力（见第 5 节）；**不含该能力时必须优雅降级**，而不是调用后报错。
 
 ## 3. REST API
 
@@ -81,9 +82,13 @@ HTTP 状态码与 `code` 同时存在。客户端应先按 HTTP 状态判断请�
 | `4001` | `404` | 资源不存在 |
 | `4002` | `404` | 玩家不在线 |
 | `4003` | `403` | 功能未启用 |
+| `4004` | `400` | 尚未绑定 |
+| `4005` | `400` | 该游戏 ID 已被其他账号绑定 |
+| `4006` | `400` | 游戏 ID 格式不合法 |
 | `5001` | `400` | 指令执行失败 |
 | `5002` | `403` | 指令被过滤 |
 | `5003` | `403` | 无执行权限 |
+| `5004` | `400` | 白名单写入失败 |
 
 ### 3.2 Endpoint Summary
 
@@ -615,7 +620,134 @@ Rules：
 
 当前实现会在 Java 通信服务器停止时发送 `SERVER_SHUTDOWN`。
 
-## 5. Operational Notes
+## 5. Binding API（`binding.v1`）
+
+把外部账号（QQ 等）与游戏 ID 绑定，并把结果写入服务器白名单。
+
+**为什么单列一个 API 而不是复用 `command/execute`**：默认配置把 `whitelist *` 列在外部指令黑名单里。
+若复用通用指令通道实现绑定，等于给机器人开放白名单权限。本 API 的语义被收窄为
+「把某个名字加进白名单」，即使凭据泄露也无法用它执行任意服务器指令。
+
+是否支持本 API 由能力位 `binding.v1` 声明；<strong>客户端必须在探测到该能力位后才调用</strong>，
+否则应停用绑定功能并提示升级。此外服务端配置 `binding.enabled` 必须为 `true`，否则返回 `4003`。
+
+### 5.1 REST
+
+`POST /api/v1/bindings`
+
+```json
+{
+  "platform": "qq",
+  "userId": "123456",
+  "gameName": "Steve",
+  "bedrock": false
+}
+```
+
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `platform` | string | yes | 外部平台名 |
+| `userId` | string | yes | 外部平台内的用户 ID（大小写敏感） |
+| `gameName` | string | yes | 游戏 ID，允许字母/数字/下划线/点号/中文，长度 1–32 |
+| `bedrock` | boolean | no | 是否为基岩版（Geyser/Floodgate），默认 `false`。为真时按 `binding.geyser` 规则处理前缀 |
+
+成功响应：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "gameName": ".Steve",
+    "floodgate": true,
+    "whitelistAdded": true,
+    "created": true,
+    "uuid": ""
+  },
+  "timestamp": 1706140800000
+}
+```
+
+`gameName` 为**实际生效**的游戏 ID（可能已按前缀规则补齐）；`whitelistAdded` 表示本次是否写入了白名单；
+`uuid` 在玩家在线时给出其真实 UUID，否则为空字符串。
+
+`POST /api/v1/bindings/unbind`
+
+```json
+{ "platform": "qq", "userId": "123456" }
+```
+
+成功响应 `data`：`{"gameName": ".Steve", "unbound": true, "whitelistRemoved": true}`。
+`whitelistRemoved` 仅在「该白名单条目由绑定写入」时为 `true`——管理员手工添加的同名条目不会被移除。
+
+`GET /api/v1/bindings/lookup?platform=qq&userId=123456`
+
+成功响应 `data`：`{"bound": true, "gameName": ".Steve", "floodgate": true, "whitelistAdded": true}`；
+未绑定时返回错误码 `4004`。
+
+`GET /api/v1/bindings?page=1&size=100`
+
+列出全部绑定，`data`：`{"count": 1, "bindings": [{"platform","userId","gameName","floodgate","whitelistAdded","createdAt","updatedAt"}]}`。用于排查冲突，`userId` 属隐私标识，请勿写入日志。
+
+### 5.2 WebSocket（可选通道）
+
+需要与其它实时事件共用长连接时，可发送 `BIND_REQUEST`：
+
+```json
+{
+  "type": "BIND_REQUEST",
+  "id": "bind-request-id",
+  "payload": {
+    "action": "bind",
+    "platform": "qq",
+    "userId": "123456",
+    "gameName": "Steve",
+    "bedrock": false
+  },
+  "timestamp": 1706140800000
+}
+```
+
+`action` 可为 `bind`（默认）或 `unbind`。结果以 `BIND_RESPONSE` 返回（`replyTo` 等于请求 `id`），
+校验与白名单写入逻辑与 REST 完全一致：
+
+```json
+{
+  "type": "BIND_RESPONSE",
+  "id": "bind-response-id",
+  "replyTo": "bind-request-id",
+  "payload": {
+    "success": true,
+    "action": "bind",
+    "gameName": ".Steve",
+    "floodgate": true,
+    "whitelistAdded": true,
+    "whitelistRemoved": false
+  },
+  "timestamp": 1706140800000
+}
+```
+
+失败时返回 `ERROR`（`replyTo` 等于请求 `id`），`payload.code` 为 5.3 中的错误码。
+
+### 5.3 错误码
+
+| JSON code | 含义 |
+| --- | --- |
+| `4003` | 绑定功能未启用（`binding.enabled=false`） |
+| `4004` | 尚未绑定 |
+| `4005` | 该游戏 ID 已被其他账号绑定 |
+| `4006` | 游戏 ID 格式不合法 |
+| `5004` | 白名单写入失败（如需检查服务器是否启用白名单） |
+
+### 5.4 行为约定
+
+- 白名单写入使用控制台身份执行 `whitelist add <gameName>`，**不受 `commandExecution` 过滤器影响**。
+- 白名单在登录阶段校验，因此绑定不会影响已在线玩家，仅在其下次登录时生效。
+- 玩家不在线时也允许绑定：按 `binding.geyser` 规则推导最终名字后直接写入白名单。
+- 服务器上本来就有同名白名单条目时，解绑不会移除它（只有绑定自己写入的条目才回收）。
+
+## 6. Operational Notes
 
 命令安全：Java 配置中的命令过滤仍在服务端强制执行，客户端不能绕过。
 
