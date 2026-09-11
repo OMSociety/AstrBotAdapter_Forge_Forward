@@ -27,7 +27,7 @@ public class NeoForgePlayerListener {
         if (notificationService == null) {
             return;
         }
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
         String displayName = player.getDisplayName() != null
                 ? player.getDisplayName().getString() : playerName;
         notificationService.notifyPlayerJoin(player.getUUID(), playerName, displayName);
@@ -42,7 +42,7 @@ public class NeoForgePlayerListener {
         if (notificationService == null) {
             return;
         }
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
         String displayName = player.getDisplayName() != null
                 ? player.getDisplayName().getString() : playerName;
         notificationService.notifyPlayerQuit(player.getUUID(), playerName, displayName, null);

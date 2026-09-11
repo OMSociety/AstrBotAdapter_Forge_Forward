@@ -14,7 +14,6 @@ import io.netty.handler.codec.http.QueryStringDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
 /**
  * 绑定 API 控制器。

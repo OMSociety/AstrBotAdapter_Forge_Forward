@@ -50,7 +50,8 @@ public class NeoForgePlayer implements CommonPlayer {
 
     @Override
     public String getName() {
-        return player.getGameProfile().getName();
+        // 26.2 中 GameProfile 已是 record，访问器为 name() 而非 getName()
+        return player.getGameProfile().name();
     }
 
     @Override
@@ -61,9 +62,9 @@ public class NeoForgePlayer implements CommonPlayer {
 
     @Override
     public int getPing() {
-        // 1.20.2 起 ping 延迟拆到 ServerCommonPacketListenerImpl.latency，ServerPlayer 上不再有
-        // public latency 字段，需经 connection 访问
-        return player.connection.latency;
+        // 26.2 中延迟存放在 ServerCommonPacketListenerImpl 的 private latency 字段，
+        // 只暴露 public int latency() 访问器
+        return player.connection.latency();
     }
 
     @Override
@@ -100,7 +101,8 @@ public class NeoForgePlayer implements CommonPlayer {
 
     @Override
     public String getWorld() {
-        return player.level().dimension().location().toString();
+        // 26.2 起 ResourceKey#location() 改名 identifier()（ResourceLocation → Identifier 同步改名）
+        return player.level().dimension().identifier().toString();
     }
 
     @Override
@@ -133,8 +135,9 @@ public class NeoForgePlayer implements CommonPlayer {
 
     @Override
     public boolean isOp() {
-        // 26.2 起 PlayerList.isOp 接收 NameAndId（不再是 GameProfile）
-        return player.server.getPlayerList().isOp(player.nameAndId());
+        // 26.2 起 ServerPlayer.server 字段为 private，需经 ServerLevel.getServer() 取回；
+        // PlayerList.isOp 也改为接收 NameAndId（不再是 GameProfile）
+        return player.level().getServer().getPlayerList().isOp(player.nameAndId());
     }
 
     @Override

@@ -35,6 +35,16 @@ public final class BindingService {
     private final BindingStore store;
     private final Logger logger;
 
+    /**
+     * 串行化整段绑定/解绑流程。
+     *
+     * <p>每个 BindingStore 方法各自加锁只能保护单次读写；而「查重 → 写白名单（阻塞）→ 落盘」
+     * 是一个复合操作。两个 REST 请求（Netty 线程）同时用不同账号绑同一个游戏 ID 时，
+     * 若不加这把锁，双方都会通过占用检查，后写入者覆盖索引，先写入者的白名单条目变成孤儿。</p>
+     */
+    private final java.util.concurrent.locks.ReentrantLock operationLock =
+            new java.util.concurrent.locks.ReentrantLock();
+
     public BindingService(PluginConfig config, PlatformAdapter platformAdapter,
                           BindingStore store, Logger logger) {
         this.config = config;
@@ -59,6 +69,15 @@ public final class BindingService {
      * @param bedrock 基岩版（Geyser/Floodgate）标记，影响名称解析与是否补前缀
      */
     public Result bind(String platform, String userId, String rawName, boolean bedrock) {
+        operationLock.lock();
+        try {
+            return bindLocked(platform, userId, rawName, bedrock);
+        } finally {
+            operationLock.unlock();
+        }
+    }
+
+    private Result bindLocked(String platform, String userId, String rawName, boolean bedrock) {
         if (!isEnabled()) {
             return Result.rejected(Rejection.FEATURE_DISABLED, null);
         }
@@ -121,6 +140,15 @@ public final class BindingService {
      * 解除绑定；仅移除「由绑定写入」的白名单条目。
      */
     public Result unbind(String platform, String userId) {
+        operationLock.lock();
+        try {
+            return unbindLocked(platform, userId);
+        } finally {
+            operationLock.unlock();
+        }
+    }
+
+    private Result unbindLocked(String platform, String userId) {
         if (!isEnabled()) {
             return Result.rejected(Rejection.FEATURE_DISABLED, null);
         }

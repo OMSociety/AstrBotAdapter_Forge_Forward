@@ -26,7 +26,7 @@ public class NeoForgeChatListener {
     public void onPlayerChat(ServerChatEvent event) {
         ServerPlayer player = event.getPlayer();
         String message = event.getRawText();
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
         String displayName = player.getDisplayName() != null
                 ? player.getDisplayName().getString() : playerName;
 
