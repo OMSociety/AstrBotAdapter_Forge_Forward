@@ -5,6 +5,19 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] - 2026-09-11
+
+### ✨ 新增
+- 一个外部账号可**同时**持有 Java 版与基岩版两条绑定：两条白名单条目并存、互不覆盖。此前第二次绑定会撤掉前一条，导致同一个人的电脑版与手机版只能进一个。
+- 绑定 API 增加 `kind`（`java` / `geyser`）维度：`lookup` 返回 `bindings[]` 完整视图与 `javaBound`/`geyserBound`；`unbind` 支持按 `kind` 定向解除，省略即清空该账号全部绑定。
+- 老 `bindings.json` 自动兼容：缺少 `kind` 的记录按原 `floodgate` 标记推断归类，升级不丢绑定。
+
+### ⚙️ 变更
+- 改绑的回收范围收窄为**同类**：改 Java 版名字不再影响基岩版那条（反之亦然）。
+- `doc/protocol.md` 第 5 节补 `kind`、`bindings[]`、`removed[]` 说明，并注明「只绑基岩版时 `bound` 为 false 但请求成功」。
+
+---
+
 ## [1.1.0] - 2026-09-11
 
 ### ✨ 新增

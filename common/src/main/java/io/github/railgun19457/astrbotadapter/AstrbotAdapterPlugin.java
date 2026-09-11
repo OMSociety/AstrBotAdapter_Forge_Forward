@@ -18,6 +18,7 @@ import io.github.railgun19457.astrbotadapter.service.command.CommandExecutionSer
 import io.github.railgun19457.astrbotadapter.service.chat.ChatService;
 import io.github.railgun19457.astrbotadapter.service.forward.MessageForwardService;
 import io.github.railgun19457.astrbotadapter.service.notification.NotificationService;
+import io.github.railgun19457.astrbotadapter.service.binding.BindingRecord;
 import io.github.railgun19457.astrbotadapter.service.binding.BindingService;
 import io.github.railgun19457.astrbotadapter.service.binding.BindingStore;
 import com.google.gson.JsonArray;
@@ -408,7 +409,13 @@ public abstract class AstrbotAdapterPlugin {
 
         BindingService.Result result;
         if ("unbind".equalsIgnoreCase(action)) {
-            result = bindingService.unbind(platform, userId);
+            // kind 可选：java / geyser 只解该类；省略或 all 清空该账号全部绑定
+            String kind = JsonUtil.getString(payload, "kind", null);
+            if (kind == null || kind.isBlank() || "all".equalsIgnoreCase(kind.trim())) {
+                result = bindingService.unbindAll(platform, userId);
+            } else {
+                result = bindingService.unbind(platform, userId, kind);
+            }
         } else {
             String gameName = JsonUtil.getString(payload, "gameName", null);
             boolean bedrock = JsonUtil.getBoolean(payload, "bedrock", false);
@@ -428,15 +435,29 @@ public abstract class AstrbotAdapterPlugin {
             return;
         }
 
+        BindingRecord mainRecord = result.getRecord();
         JsonObject responsePayload = new JsonObject();
         responsePayload.addProperty("success", true);
         responsePayload.addProperty("action", action);
-        responsePayload.addProperty("gameName", result.getRecord().getGameName());
-        responsePayload.addProperty("floodgate", result.getRecord().isFloodgate());
+        responsePayload.addProperty("kind", mainRecord.getKind());
+        responsePayload.addProperty("gameName", mainRecord.getGameName());
+        responsePayload.addProperty("floodgate", mainRecord.isFloodgate());
         responsePayload.addProperty("whitelistAdded",
-                "unbind".equalsIgnoreCase(action) ? false : result.getRecord().isWhitelistAdded());
+                "unbind".equalsIgnoreCase(action) ? false : mainRecord.isWhitelistAdded());
         responsePayload.addProperty("whitelistRemoved",
                 "unbind".equalsIgnoreCase(action) && result.isWhitelistChanged());
+
+        if ("unbind".equalsIgnoreCase(action)) {
+            JsonArray removed = new JsonArray();
+            for (BindingRecord record : result.getRemovedRecords()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("kind", record.getKind());
+                item.addProperty("gameName", record.getGameName());
+                item.addProperty("whitelistRemoved", record.isWhitelistAdded());
+                removed.add(item);
+            }
+            responsePayload.add("removed", removed);
+        }
 
         Message response = Message.builder()
                 .type(MessageType.BIND_RESPONSE)

@@ -11,24 +11,30 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 /**
  * 外部账号（QQ 等）与游戏 ID 的绑定服务，并把结果落到服务器白名单。
  *
+ * <p>一个外部账号可以**同时**持有一条 Java 版绑定与一条基岩版绑定，两条白名单条目并存、互不覆盖。
+ * 因此所有「按账号定位记录」的操作都带绑定类型（{@code java} / {@code geyser}）。</p>
+ *
  * <p>设计取舍：白名单写入**不**复用 {@code /api/v1/command/execute}，而是走本服务的专用入口。
  * 原因是默认配置把 {@code whitelist *} 列在外部指令黑名单里——复用通用指令通道等于给机器人
  * 开放白名单权限；本服务的语义被收窄为「把某个名字加进白名单」，无法执行任意指令。</p>
  *
- * <p>并发：所有 Minecraft API 调用与索引变更都在服务器主线程执行
- * （{@link PlatformAdapter#executeCommand(String)} 内部会把调用调度回主线程并阻塞等待），
- * 因此不存在索引与游戏状态不一致的窗口。</p>
+ * <p>并发：{@link #operationLock} 串行化整段读改写流程（含阻塞的白名单指令），
+ * 避免两个请求同时通过占用校验。</p>
  */
 public final class BindingService {
 
     /** Minecraft 用户名合法字符（Java 版字母数字下划线，基岩版/Floodgate 另含点号） */
     private static final Pattern NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_.\\u4e00-\\u9fa5]{1,32}$");
+
+    /** 按稳定顺序遍历两种绑定类型，保证日志与响应顺序可预期 */
+    private static final String[] ALL_KINDS = {BindingRecord.KIND_JAVA, BindingRecord.KIND_GEYSER};
 
     private final PluginConfig config;
     private final PlatformAdapter platformAdapter;
@@ -39,11 +45,10 @@ public final class BindingService {
      * 串行化整段绑定/解绑流程。
      *
      * <p>每个 BindingStore 方法各自加锁只能保护单次读写；而「查重 → 写白名单（阻塞）→ 落盘」
-     * 是一个复合操作。两个 REST 请求（Netty 线程）同时用不同账号绑同一个游戏 ID 时，
-     * 若不加这把锁，双方都会通过占用检查，后写入者覆盖索引，先写入者的白名单条目变成孤儿。</p>
+     * 是一个复合操作。两个 REST 请求同时绑同一个游戏 ID 时，若不加这把锁，双方都会通过占用
+     * 检查，后写入者覆盖索引，先写入者的白名单条目变成孤儿。</p>
      */
-    private final java.util.concurrent.locks.ReentrantLock operationLock =
-            new java.util.concurrent.locks.ReentrantLock();
+    private final ReentrantLock operationLock = new ReentrantLock();
 
     public BindingService(PluginConfig config, PlatformAdapter platformAdapter,
                           BindingStore store, Logger logger) {
@@ -63,11 +68,7 @@ public final class BindingService {
 
     // ===== 对外操作 =====
 
-    /**
-     * 绑定外部账号到游戏 ID；必要时写入白名单。
-     *
-     * @param bedrock 基岩版（Geyser/Floodgate）标记，影响名称解析与是否补前缀
-     */
+    /** 绑定（只影响与 {@code bedrock} 对应的那一条：Java 或基岩，另一条保持不变）。 */
     public Result bind(String platform, String userId, String rawName, boolean bedrock) {
         operationLock.lock();
         try {
@@ -93,26 +94,31 @@ public final class BindingService {
             return Result.rejected(Rejection.INVALID_NAME, null);
         }
 
+        String kind = BindingRecord.kindOf(bedrock);
+
         // 解析实际生效的游戏 ID：优先用在线玩家（拿到真实大小写与前缀形态），
         // 离线时按 Floodgate 前缀规则推导，保证「绑定即写入」在玩家不在线时也可用。
         ResolvedName resolved = resolveName(typedName, bedrock);
 
+        // 全局占用校验：同一游戏 ID 只能属于一个账号（跨 Java/基岩也拦）
         BindingRecord occupant = store.getByGameName(resolved.name());
         if (occupant != null
-                && !occupant.subjectKey().equals(BindingRecord.subjectKey(platformKey, userKey))) {
+                && !occupant.bindingKey().equals(BindingRecord.bindingKey(platformKey, userKey, kind))) {
             // 只回显被占用的游戏 ID，不回显对方账号 ID（隐私）
             return Result.rejected(Rejection.NAME_TAKEN, resolved.name());
         }
 
-        BindingRecord existing = store.getBySubject(platformKey, userKey);
-        if (existing != null && !existing.getGameName().equalsIgnoreCase(resolved.name())) {
-            // 改绑：先按解绑语义回收旧条目，避免同名条目无限堆积
-            releaseWhitelistEntry(existing, platformKey, userKey);
+        // 只回收**同一类型**的旧条目：改绑 Java 名不应影响基岩那条，反之亦然
+        BindingRecord existing = store.get(platformKey, userKey, kind);
+        boolean sameName = existing != null && existing.getGameName().equalsIgnoreCase(resolved.name());
+        if (existing != null && !sameName) {
+            releaseWhitelistEntry(existing);
         }
 
         BindingRecord record = existing == null
-                ? new BindingRecord(platformKey, userKey, resolved.name())
+                ? new BindingRecord(platformKey, userKey, kind, resolved.name())
                 : existing;
+        record.setKind(kind);
         record.setGameName(resolved.name());
         record.setFloodgate(resolved.floodgate());
         record.setJavaUuid(resolved.uuid() == null ? "" : resolved.uuid().toString());
@@ -131,43 +137,93 @@ public final class BindingService {
 
         store.put(record);
         store.save();
-        logger.info("已绑定 " + BindingRecord.subjectKey(platformKey, userKey) + " -> " + resolved.name()
-                + (bedrock ? "（基岩版）" : "") + (whitelistAdded ? "，已加入白名单" : ""));
+        logger.info("已绑定 " + record.subjectKey() + " [" + kind + "] -> " + resolved.name()
+                + (whitelistAdded ? "，已加入白名单" : ""));
         return Result.ok(record, true);
     }
 
     /**
-     * 解除绑定；仅移除「由绑定写入」的白名单条目。
+     * 解除某一类绑定（只移除该类目下「由绑定写入」的白名单条目）。
+     *
+     * @param kind {@link BindingRecord#KIND_JAVA} 或 {@link BindingRecord#KIND_GEYSER}
      */
-    public Result unbind(String platform, String userId) {
+    public Result unbind(String platform, String userId, String kind) {
         operationLock.lock();
         try {
-            return unbindLocked(platform, userId);
+            return unbindKindLocked(platform, userId, kind);
         } finally {
             operationLock.unlock();
         }
     }
 
-    private Result unbindLocked(String platform, String userId) {
+    private Result unbindKindLocked(String platform, String userId, String kind) {
         if (!isEnabled()) {
             return Result.rejected(Rejection.FEATURE_DISABLED, null);
         }
-
-        BindingRecord record = store.getBySubject(platform, userId);
+        BindingRecord record = store.get(platform, userId, kind);
         if (record == null) {
             return Result.rejected(Rejection.NOT_BOUND, null);
         }
-
-        boolean whitelistRemoved = releaseWhitelistEntry(record, platform, userId);
-        store.remove(platform, userId);
+        boolean whitelistRemoved = releaseWhitelistEntry(record);
+        store.remove(platform, userId, kind);
         store.save();
-        logger.info("已解绑 " + record.subjectKey() + "（原游戏 ID: " + record.getGameName() + "）"
+        logger.info("已解绑 " + record.subjectKey() + " [" + record.getKind() + "]"
+                + "（原游戏 ID: " + record.getGameName() + "）"
                 + (whitelistRemoved ? "，已从白名单移除" : "，白名单条目保留"));
-        return Result.ok(record, whitelistRemoved);
+        return Result.removed(List.of(record), whitelistRemoved);
     }
 
-    public BindingRecord lookup(String platform, String userId) {
-        return store.getBySubject(platform, userId);
+    /**
+     * 解除该账号的**全部**绑定（Java 与基岩都清），逐条回收白名单。
+     *
+     * <p>某条白名单移除失败不影响其余条目：已成功删除的照常落盘，失败的那条保留并如实回报。</p>
+     */
+    public Result unbindAll(String platform, String userId) {
+        operationLock.lock();
+        try {
+            if (!isEnabled()) {
+                return Result.rejected(Rejection.FEATURE_DISABLED, null);
+            }
+            List<BindingRecord> removed = new ArrayList<>(2);
+            boolean anyWhitelistRemoved = false;
+            for (String kind : ALL_KINDS) {
+                BindingRecord record = store.get(platform, userId, kind);
+                if (record == null) {
+                    continue;
+                }
+                boolean whitelistRemoved = releaseWhitelistEntry(record);
+                anyWhitelistRemoved |= whitelistRemoved;
+                if (record.isWhitelistAdded() && !whitelistRemoved) {
+                    // 白名单没删掉就不要丢记录，否则以后再也回收不了这条条目
+                    logger.warning("解绑时白名单移除失败，保留记录以便重试: " + record.getGameName());
+                    continue;
+                }
+                store.remove(platform, userId, kind);
+                removed.add(record);
+            }
+            if (removed.isEmpty()) {
+                return Result.rejected(Rejection.NOT_BOUND, null);
+            }
+            store.save();
+            logger.info("已清空 " + BindingRecord.bindingKey(platform, userId, "") + " 的 "
+                    + removed.size() + " 条绑定");
+            return Result.removed(removed, anyWhitelistRemoved);
+        } finally {
+            operationLock.unlock();
+        }
+    }
+
+    /** 取该账号的某一条绑定（kind 为 null 时返回 Java 那条，保证旧客户端语义）。 */
+    public BindingRecord lookup(String platform, String userId, String kind) {
+        if (kind == null || kind.isBlank()) {
+            return store.get(platform, userId, BindingRecord.KIND_JAVA);
+        }
+        return store.get(platform, userId, kind);
+    }
+
+    /** 取该账号的全部绑定（0~2 条，顺序为 Java 在前）。 */
+    public List<BindingRecord> lookupAll(String platform, String userId) {
+        return store.getAll(platform, userId);
     }
 
     public Collection<BindingRecord> list() {
@@ -235,7 +291,7 @@ public final class BindingService {
     /**
      * 仅在「该条目由绑定写入」时移除白名单，避免误删管理员手工添加的同名条目。
      */
-    private boolean releaseWhitelistEntry(BindingRecord record, String platform, String userId) {
+    private boolean releaseWhitelistEntry(BindingRecord record) {
         if (record == null || !record.isWhitelistAdded()) {
             return false;
         }
@@ -264,22 +320,31 @@ public final class BindingService {
         private final BindingRecord record;
         private final boolean whitelistChanged;
         private final String gameName;
+        private final List<BindingRecord> removedRecords;
 
         private Result(boolean success, Rejection rejection, BindingRecord record,
-                       boolean whitelistChanged, String gameName) {
+                       boolean whitelistChanged, String gameName, List<BindingRecord> removedRecords) {
             this.success = success;
             this.rejection = rejection;
             this.record = record;
             this.whitelistChanged = whitelistChanged;
             this.gameName = gameName;
+            this.removedRecords = removedRecords == null ? List.of() : removedRecords;
         }
 
         static Result ok(BindingRecord record, boolean whitelistChanged) {
-            return new Result(true, null, record, whitelistChanged, record.getGameName());
+            return new Result(true, null, record, whitelistChanged, record.getGameName(), List.of());
+        }
+
+        /** 解绑结果：可能一次移除多条（Java + 基岩）。 */
+        static Result removed(List<BindingRecord> records, boolean whitelistChanged) {
+            BindingRecord first = records.isEmpty() ? null : records.get(0);
+            String name = first == null ? null : first.getGameName();
+            return new Result(true, null, first, whitelistChanged, name, List.copyOf(records));
         }
 
         static Result rejected(Rejection rejection, String gameName) {
-            return new Result(false, rejection, null, false, gameName);
+            return new Result(false, rejection, null, false, gameName, List.of());
         }
 
         public boolean isSuccess() {
@@ -290,8 +355,14 @@ public final class BindingService {
             return rejection;
         }
 
+        /** 主要记录（bind 时为新建/更新的那条；解绑时为首条被移除的记录，可能为 null） */
         public BindingRecord getRecord() {
             return record;
+        }
+
+        /** 被移除的全部记录（bind 时为空列表） */
+        public List<BindingRecord> getRemovedRecords() {
+            return removedRecords;
         }
 
         /** 本次操作是否实际改动了白名单 */

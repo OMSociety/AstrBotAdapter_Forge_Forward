@@ -75,16 +75,35 @@ public class BindingController {
 
         String platform = JsonUtil.getString(params, "platform", null);
         String userId = JsonUtil.getString(params, "userId", null);
+        // kind 可选：java / geyser 表示只解该类；省略（或 "all"）表示清空该账号全部绑定
+        String kind = JsonUtil.getString(params, "kind", null);
 
-        BindingService.Result result = bindingService.unbind(platform, userId);
+        BindingService.Result result;
+        if (kind == null || kind.isBlank() || "all".equalsIgnoreCase(kind.trim())) {
+            result = bindingService.unbindAll(platform, userId);
+        } else {
+            result = bindingService.unbind(platform, userId, kind);
+        }
         if (!result.isSuccess()) {
             return toResponse(result);
         }
 
+        List<JsonObject> removed = new ArrayList<>();
+        for (BindingRecord record : result.getRemovedRecords()) {
+            JsonObject item = new JsonObject();
+            item.addProperty("kind", record.getKind());
+            item.addProperty("gameName", record.getGameName());
+            item.addProperty("whitelistRemoved", record.isWhitelistAdded());
+            removed.add(item);
+        }
+
         JsonObject data = new JsonObject();
-        data.addProperty("gameName", result.getRecord().getGameName());
         data.addProperty("unbound", true);
         data.addProperty("whitelistRemoved", result.isWhitelistChanged());
+        data.add("removed", JsonUtil.getGson().toJsonTree(removed));
+        // 兼容旧客户端：gameName 取首个被移除记录
+        data.addProperty("gameName",
+                result.getRecord() == null ? "" : result.getRecord().getGameName());
         return Response.success(data);
     }
 
@@ -108,16 +127,48 @@ public class BindingController {
             return Response.error(ErrorCode.REQUEST_PARAM_MISSING, "缺少 platform 或 userId 参数");
         }
 
-        BindingRecord record = bindingService.lookup(platform, userId);
-        data.addProperty("bound", record != null);
-        if (record != null) {
-            data.addProperty("gameName", record.getGameName());
-            data.addProperty("floodgate", record.isFloodgate());
-            data.addProperty("whitelistAdded", record.isWhitelistAdded());
-        } else {
-            data.addProperty("gameName", "");
+        List<BindingRecord> records = bindingService.lookupAll(platform, userId);
+        BindingRecord javaRecord = null;
+        BindingRecord geyserRecord = null;
+        for (BindingRecord record : records) {
+            if (record.isGeyser()) {
+                geyserRecord = record;
+            } else {
+                javaRecord = record;
+            }
+        }
+
+        // 兼容旧客户端：bound/gameName 等字段含义为「Java 版绑定」
+        data.addProperty("bound", javaRecord != null);
+        data.addProperty("gameName", javaRecord == null ? "" : javaRecord.getGameName());
+        if (javaRecord != null) {
+            data.addProperty("floodgate", javaRecord.isFloodgate());
+            data.addProperty("whitelistAdded", javaRecord.isWhitelistAdded());
+        }
+        // 新字段：两类绑定的完整视图
+        data.addProperty("javaBound", javaRecord != null);
+        data.addProperty("geyserBound", geyserRecord != null);
+        data.add("bindings", JsonUtil.getGson().toJsonTree(toItems(records)));
+
+        if (records.isEmpty()) {
+            // 一条都没有：仍返回 4004，但带上空的 bindings，便于客户端区分「完全没绑」
+            return Response.error(ErrorCode.BINDING_NOT_FOUND, "尚未绑定");
         }
         return Response.success(data);
+    }
+
+    /** 把记录列表转成对外的 JSON 数组（供 lookup 与 list 复用）。 */
+    private List<JsonObject> toItems(List<BindingRecord> records) {
+        List<JsonObject> items = new ArrayList<>();
+        for (BindingRecord record : records) {
+            JsonObject item = new JsonObject();
+            item.addProperty("kind", record.getKind());
+            item.addProperty("gameName", record.getGameName());
+            item.addProperty("floodgate", record.isFloodgate());
+            item.addProperty("whitelistAdded", record.isWhitelistAdded());
+            items.add(item);
+        }
+        return items;
     }
 
     private Response listBindings() {
@@ -131,6 +182,7 @@ public class BindingController {
             item.addProperty("platform", record.getSubjectPlatform());
             // userId 属隐私标识：仅在显式排查接口返回，勿写入日志
             item.addProperty("userId", record.getSubjectUserId());
+            item.addProperty("kind", record.getKind());
             item.addProperty("gameName", record.getGameName());
             item.addProperty("floodgate", record.isFloodgate());
             item.addProperty("whitelistAdded", record.isWhitelistAdded());
@@ -147,13 +199,14 @@ public class BindingController {
 
     private Response toResponse(BindingService.Result result) {
         if (result.isSuccess()) {
+            BindingRecord record = result.getRecord();
             JsonObject data = new JsonObject();
-            data.addProperty("gameName", result.getRecord().getGameName());
-            data.addProperty("floodgate", result.getRecord().isFloodgate());
-            data.addProperty("whitelistAdded", result.getRecord().isWhitelistAdded());
-            data.addProperty("created", result.getRecord().getCreatedAt()
-                    == result.getRecord().getUpdatedAt());
-            String uuid = result.getRecord().getJavaUuid();
+            data.addProperty("kind", record.getKind());
+            data.addProperty("gameName", record.getGameName());
+            data.addProperty("floodgate", record.isFloodgate());
+            data.addProperty("whitelistAdded", record.isWhitelistAdded());
+            data.addProperty("created", record.getCreatedAt() == record.getUpdatedAt());
+            String uuid = record.getJavaUuid();
             data.addProperty("uuid", uuid == null || uuid.isEmpty() ? "" : uuid);
             return Response.success(data);
         }

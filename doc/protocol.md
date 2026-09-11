@@ -671,23 +671,53 @@ Rules：
 `gameName` 为**实际生效**的游戏 ID（可能已按前缀规则补齐）；`whitelistAdded` 表示本次是否写入了白名单；
 `uuid` 在玩家在线时给出其真实 UUID，否则为空字符串。
 
+`kind` 为本次绑定落在哪一类：`java`（`bedrock=false`）或 `geyser`（`bedrock=true`）。
+**同一账号可以同时持有这两类各一条绑定**，两条白名单条目并存：`/api/v1/bindings` 只影响
+与 `bedrock` 对应的那一类，另一类保持不变。
+
 `POST /api/v1/bindings/unbind`
 
 ```json
-{ "platform": "qq", "userId": "123456" }
+{ "platform": "qq", "userId": "123456", "kind": "geyser" }
 ```
 
-成功响应 `data`：`{"gameName": ".Steve", "unbound": true, "whitelistRemoved": true}`。
-`whitelistRemoved` 仅在「该白名单条目由绑定写入」时为 `true`——管理员手工添加的同名条目不会被移除。
+| Field | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `platform` | string | yes | 外部平台名 |
+| `userId` | string | yes | 外部平台用户 ID |
+| `kind` | string | no | `java` / `geyser` 只解该类；省略或 `all` 表示**清空该账号全部绑定** |
+
+成功响应 `data`：`{"unbound": true, "whitelistRemoved": true, "gameName": ".Steve",
+"removed": [{"kind": "geyser", "gameName": ".Steve", "whitelistRemoved": true}]}`。
+`removed` 列出本次实际移除的每一条（清空时可能两条）；`gameName` 为兼容旧客户端保留，取首条。
+单条的 `whitelistRemoved` 仅在「该白名单条目由绑定写入」时为 `true`——管理员手工添加的同名条目不会被移除。
 
 `GET /api/v1/bindings/lookup?platform=qq&userId=123456`
 
-成功响应 `data`：`{"bound": true, "gameName": ".Steve", "floodgate": true, "whitelistAdded": true}`；
-未绑定时返回错误码 `4004`。
+成功响应 `data` 同时提供两类视图：
+
+```json
+{
+  "bound": true,
+  "gameName": "Steve",
+  "floodgate": false,
+  "whitelistAdded": true,
+  "javaBound": true,
+  "geyserBound": true,
+  "bindings": [
+    {"kind": "java", "gameName": "Steve", "floodgate": false, "whitelistAdded": true},
+    {"kind": "geyser", "gameName": ".Steve", "floodgate": true, "whitelistAdded": true}
+  ]
+}
+```
+
+`bound`/`gameName`/`floodgate`/`whitelistAdded` 为兼容旧客户端保留，含义是**Java 版绑定**；
+`bindings` 是完整视图（Java 在前）。**该账号一条绑定都没有**时才返回错误码 `4004`；
+只绑了基岩版时 `bound` 为 `false` 但请求成功，客户端应据 `bindings` 判断，不要只看 `bound`。
 
 `GET /api/v1/bindings?page=1&size=100`
 
-列出全部绑定，`data`：`{"count": 1, "bindings": [{"platform","userId","gameName","floodgate","whitelistAdded","createdAt","updatedAt"}]}`。用于排查冲突，`userId` 属隐私标识，请勿写入日志。
+列出全部绑定，`data`：`{"count": 2, "bindings": [{"platform","userId","kind","gameName","floodgate","whitelistAdded","createdAt","updatedAt"}]}`。用于排查冲突，`userId` 属隐私标识，请勿写入日志。
 
 ### 5.2 WebSocket（可选通道）
 
@@ -708,7 +738,8 @@ Rules：
 }
 ```
 
-`action` 可为 `bind`（默认）或 `unbind`。结果以 `BIND_RESPONSE` 返回（`replyTo` 等于请求 `id`），
+`action` 可为 `bind`（默认）或 `unbind`。`unbind` 时可在 `payload` 里带 `kind`，语义与 REST 相同
+（`java` / `geyser` 只解该类；省略或 `all` 清空全部）。结果以 `BIND_RESPONSE` 返回（`replyTo` 等于请求 `id`），
 校验与白名单写入逻辑与 REST 完全一致：
 
 ```json
@@ -719,6 +750,7 @@ Rules：
   "payload": {
     "success": true,
     "action": "bind",
+    "kind": "geyser",
     "gameName": ".Steve",
     "floodgate": true,
     "whitelistAdded": true,
@@ -727,6 +759,8 @@ Rules：
   "timestamp": 1706140800000
 }
 ```
+
+`unbind` 的响应额外带 `removed` 数组（与 REST 同结构），逐条列出本次移除的绑定。
 
 失败时返回 `ERROR`（`replyTo` 等于请求 `id`），`payload.code` 为 5.3 中的错误码。
 
